@@ -50,4 +50,15 @@ addons:
     - g++-mingw-w64-x86-64
     - patch
     
-script: ls ..
+before_script:
+    - mkdir /opt/vita
+    - mkdir /opt/vita/toolchain
+    - cd /opt/vita/toolchain
+    - wget https://launchpad.net/gcc-arm-embedded/4.9/4.9-2015-q2-update/+download/gcc-arm-none-eabi-4_9-2015q2-20150609-src.tar.bz2
+    - mv gccarmnoneeabi542016q220160622srctar.bz2 gcc-arm-none-eabi-542016q220160622-src.tar.bz2
+    - wget http://www.digip.org/jansson/releases/jansson-2.7.tar.gz
+    - wget http://nih.at/libzip/libzip-1.1.3.tar.gz
+    
+script:
+  - cd
+  - ls

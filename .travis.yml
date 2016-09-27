@@ -58,5 +58,21 @@ before_script:
     - wget http://nih.at/libzip/libzip-1.1.3.tar.gz
     
 script:
-  - cd
-  - ls build/DaveeFTW
+    - cd $TRAVIS_BUILD_DIR
+    - cd ..
+    - tar xf /opt/vita/toolchain/gcc-arm-none-eabi-4_9-2015q2-20150609-src.tar.bz2
+    - mv gcc-arm-none-eabi-4_9-2015q2-20150609 toolchain
+    - cp -r buildscripts/* toolchain
+    - cd toolchain/src
+    - cp /opt/vita/toolchain/jansson-2.7.tar.gz .
+    - cp /opt/vita/toolchain/libzip-1.1.3.tar.gz .
+    - find -name '*.tar.*' | xargs -I% tar -xf %
+    - rm -rf newlib
+    - cd ..
+    - patch -p1 < vita.patch
+    - git clone https://github.com/vitasdk/vita-toolchain.git src/vita-toolchain
+    - git clone https://github.com/vitasdk/vita-headers.git src/vita-headers
+    - git clone https://github.com/vitasdk/newlib.git src/newlib
+    - git clone https://github.com/vitasdk/pthread-embedded.git src/pthread-embedded
+    - /bin/bash build-prerequisites.sh --skip_steps=mingw32
+    - /bin/bash build-toolchain.sh --skip_steps=manual,mingw32

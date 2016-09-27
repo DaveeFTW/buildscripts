@@ -54,12 +54,14 @@ before_script:
     - mkdir /opt/vita
     - mkdir /opt/vita/toolchain
     - cd /opt/vita/toolchain
+    - wget https://launchpad.net/gcc-arm-embedded/4.9/4.9-2015-q2-update/+download/gcc-arm-none-eabi-4_9-2015q2-20150609-src.tar.bz2
     - wget http://www.digip.org/jansson/releases/jansson-2.7.tar.gz
     - wget http://nih.at/libzip/libzip-1.1.3.tar.gz
     
 script:
     - cd $TRAVIS_BUILD_DIR
     - cd ..
+    - ls
     - tar xf /opt/vita/toolchain/gcc-arm-none-eabi-4_9-2015q2-20150609-src.tar.bz2
     - mv gcc-arm-none-eabi-4_9-2015q2-20150609 toolchain
     - cp -r buildscripts/* toolchain

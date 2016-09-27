@@ -3,6 +3,43 @@ sudo: required
 addons:
   apt:
     packages:
+    - gcc
+    - git 
     - cmake
-  
-script: cmake --version
+    - zlib1g-dev
+    - libzip-dev
+    - apt-src
+    - scons
+    - p7zip-full
+    - gawk
+    - gzip
+    - perl
+    - autoconf
+    - m4
+    - automake
+    - libtool
+    - libncurses5-dev
+    - gettext
+    - gperf
+    - dejagnu
+    - expect
+    - tcl
+    - autogen
+    - flex
+    - flip
+    - bison
+    - tofrodos
+    - texinfo
+    - g++
+    - gcc-multilib
+    - libgmp3-dev
+    - libmpfr-dev
+    - debhelper
+    - texlive
+    - texlive-extra-utils
+    - zip
+    - gcc-mingw-w64
+    - g++-mingw-w64
+    - patch
+    
+script: ls ..

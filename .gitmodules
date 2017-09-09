@@ -1,0 +1,4 @@
+[submodule "musl"]
+	path = musl
+	url = git@github.com:DaveeFTW/musl.git
+	branch = vita

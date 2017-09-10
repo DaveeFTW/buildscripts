@@ -12,11 +12,9 @@ set(GCC_VERSION 7.2.0)
 set(GCC_HASH SHA256=1cf7adf8ff4b5aa49041c8734bbcf1ad18cc4c94d0029aae0f4e48841088479a)
 
 # Branches to fetch the different project targets. Can be overriden from command line.
-set(NEWLIB_TAG vita CACHE string "newlib branch name, commit id or tag")
 set(SAMPLES_TAG master CACHE string "samples branch name, commit id or tag")
 set(HEADERS_TAG master CACHE string "vita-headers branch name, commit id or tag")
 set(TOOLCHAIN_TAG master CACHE string "vita-toolchain branch name, commit id or tag")
-set(PTHREAD_TAG master CACHE string "pthread-embedded branch name, commit id or tag")
 
 # Location to save the downloaded tarballs. Can be overriden from command line.
 set(DOWNLOAD_DIR ${CMAKE_BINARY_DIR}/downloads CACHE PATH "Default download path for tarballs")
@@ -335,7 +333,7 @@ else()
 endif()
 
 # Native toolchain install dir (used to build the real toolchain)
-set(toolchain_build_install_dir ${CMAKE_BINARY_DIR}/toolchain_${build_suffix})
+set(toolchain_build_install_dir ${CMAKE_BINARY_DIR}/vitasdk)
 # Native toolchain dependencies dir
 set(toolchain_build_depends_dir ${CMAKE_BINARY_DIR}/deps_${build_suffix})
 # Build the native vita-toolchain, gcc dependencies and binutils
@@ -393,7 +391,6 @@ set(common_gcc_configure_args
     --disable-tls
     --with-gnu-as
     --with-gnu-ld
-    --with-newlib
     --disable-multilib
     --with-arch=armv7-a
     --with-tune=cortex-a9
@@ -407,7 +404,7 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     list(APPEND common_gcc_configure_args "--with-host-libstdcxx=-static-libgcc -Wl,-Bstatic,-lstdc++,-Bdynamic -lm")
 endif()
 
-# Build a basic gcc compiler, needed to compile newlib
+# Build a basic gcc compiler, needed to compile musl
 ExternalProject_add(gcc-base
     DEPENDS gmp_${build_suffix} mpfr_${build_suffix} mpc_${build_suffix} isl_${build_suffix}
     URL http://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz
@@ -423,17 +420,22 @@ ExternalProject_add(gcc-base
     --prefix=${toolchain_build_install_dir}
     --libdir=${toolchain_build_install_dir}/lib
     --libexecdir=${toolchain_build_install_dir}/lib
-    --with-sysroot=${toolchain_build_install_dir}/${target_arch}
-    --with-gmp=${toolchain_build_depends_dir}
-    --with-mpfr=${toolchain_build_depends_dir}
-    --with-mpc=${toolchain_build_depends_dir}
-    --with-isl=${toolchain_build_depends_dir}
-    --with-libelf=${toolchain_build_depends_dir}
+    --with-gmp=${toolchain_target_depends_dir}
+    --with-mpfr=${toolchain_target_depends_dir}
+    --with-mpc=${toolchain_target_depends_dir}
+    --with-isl=${toolchain_target_depends_dir}
+    --with-libelf=${toolchain_target_depends_dir}
+    --enable-languages=c
     ${common_gcc_configure_args}
-    --disable-threads
     --without-headers
-    BUILD_COMMAND $(MAKE) all-gcc
-    INSTALL_COMMAND $(MAKE) install-gcc
+    BUILD_COMMAND $(MAKE) all-gcc COMMAND $(MAKE) all-target-libgcc
+    INSTALL_COMMAND $(MAKE) install-gcc COMMAND $(MAKE) install-target-libgcc
+    # Remove gcc docs to reduce size
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_INSTALL_PREFIX}/share/man
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_INSTALL_PREFIX}/share/info
+    # Remove .la files
+    COMMAND ${CMAKE_COMMAND} -DGLOB_PATTERN=${CMAKE_INSTALL_PREFIX}/*.la
+    -P ${CMAKE_SOURCE_DIR}/cmake/remove_files.cmake
     )
 
 ExternalProject_add(vita-headers
@@ -464,40 +466,31 @@ ExternalProject_add(vita-headers
 
 fix_repo_update(vita-headers)
 
-ExternalProject_Add(newlib
+ExternalProject_Add(musl
     DEPENDS binutils_${target_suffix} gcc-base vita-headers
-    GIT_REPOSITORY https://github.com/vitasdk/newlib
-    GIT_TAG ${NEWLIB_TAG}
-    ${GIT_SHALLOW_SUPPORT}
-    # Pass the compiler_target_tools here so newlib picks up the fresh gcc-base compiler
-    CONFIGURE_COMMAND ${compiler_flags} ${toolchain_tools} ${compiler_target_tools}
-    ${wrapper_command} <SOURCE_DIR>/configure "CFLAGS_FOR_TARGET=-g -O2 -ffunction-sections -fdata-sections"
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/musl
+    # Pass the compiler_target_tools here so musl picks up the fresh gcc-base compiler
+    CONFIGURE_COMMAND ${compiler_flags} ${toolchain_tools} ${compiler_target_tools} "CC=${binutils_prefix}-gcc" "CROSS_COMPILE=${binutils_prefix}-"
+    ${wrapper_command} <SOURCE_DIR>/configure "CFLAGS=-g -O2 -ffunction-sections -fdata-sections -DSYSCALL_NO_INLINE -I${CMAKE_INSTALL_PREFIX}/${target_arch}/include -DdaaaaddaaaaasssdWvdfsRaDS"
     --build=${build_native}
     --host=${host_native}
     --target=${target_arch}
     # Use this prefix so the install target can be run twice with different paths
     --prefix=/
     --with-build-sysroot=${CMAKE_INSTALL_PREFIX}/${target_arch}
-    --enable-newlib-io-long-long
-    --enable-newlib-register-fini
-    --disable-newlib-supplied-syscalls
     --disable-nls
+    --disable-shared
     BUILD_COMMAND ${compiler_flags} ${toolchain_tools} ${wrapper_command} $(MAKE)
-    INSTALL_COMMAND $(MAKE) install DESTDIR=${CMAKE_INSTALL_PREFIX}
-    # Install a copy of newlib in the toolchain directory (required for pthread-embedded target)
+    INSTALL_COMMAND $(MAKE) install DESTDIR=${CMAKE_INSTALL_PREFIX}/${target_arch}
+    # Install a copy of musl in the toolchain directory (required for pthread-embedded target)
     COMMAND $(MAKE) install DESTDIR=${toolchain_build_install_dir}
-    # Save the commit id for tracking purposes
-    COMMAND ${GIT_EXECUTABLE} -C <SOURCE_DIR> rev-parse HEAD > ${CMAKE_BINARY_DIR}/newlib-version.txt
-    ${UPDATE_DISCONNECTED_SUPPORT}
     )
-
-fix_repo_update(newlib)
 
 # Build a complete gcc compiler to be able to compile the full gcc for the host when crosscompiling.
 # Using gcc-base doesn't work since is missing some headers.
 if(CMAKE_TOOLCHAIN_FILE)
     ExternalProject_add(gcc-complete
-        DEPENDS newlib gmp_${build_suffix} mpfr_${build_suffix} mpc_${build_suffix} isl_${build_suffix}
+        DEPENDS musl gmp_${build_suffix} mpfr_${build_suffix} mpc_${build_suffix} isl_${build_suffix}
         URL http://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz
         URL_HASH ${GCC_HASH}
         DOWNLOAD_DIR ${DOWNLOAD_DIR}
@@ -530,27 +523,9 @@ else()
     set(GCC_DEPENDS gcc-base)
 endif()
 
-ExternalProject_Add(pthread-embedded
-    DEPENDS binutils_${target_suffix} gcc-base newlib vita-headers
-    GIT_REPOSITORY https://github.com/vitasdk/pthread-embedded
-    GIT_TAG ${PTHREAD_TAG}
-    ${GIT_SHALLOW_SUPPORT}
-    # TODO: this project should have a proper makefile to support out-of-source builds
-    BUILD_IN_SOURCE 1
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND ${compiler_flags} ${wrapper_command} $(MAKE)
-    -C <SOURCE_DIR>/platform/vita ${pthread_tools} PREFIX=${CMAKE_INSTALL_PREFIX}
-    INSTALL_COMMAND $(MAKE) -C <SOURCE_DIR>/platform/vita PREFIX=${CMAKE_INSTALL_PREFIX}/${target_arch} install
-    # Save the commit id for tracking purposes
-    COMMAND ${GIT_EXECUTABLE} -C <SOURCE_DIR> rev-parse HEAD > ${CMAKE_BINARY_DIR}/pthread-embedded-version.txt
-    ${UPDATE_DISCONNECTED_SUPPORT}
-    )
-
-fix_repo_update(pthread-embedded)
-
 ExternalProject_add(gcc-final
     DEPENDS gmp_${target_suffix} mpfr_${target_suffix} mpc_${target_suffix} isl_${target_suffix}
-    DEPENDS newlib ${GCC_DEPENDS} pthread-embedded
+    DEPENDS musl ${GCC_DEPENDS}
     URL http://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz
     URL_HASH ${GCC_HASH}
     DOWNLOAD_DIR ${DOWNLOAD_DIR}
@@ -565,6 +540,8 @@ ExternalProject_add(gcc-final
     --libdir=${CMAKE_INSTALL_PREFIX}/lib
     --libexecdir=${CMAKE_INSTALL_PREFIX}/lib
     --with-sysroot=${CMAKE_INSTALL_PREFIX}/${target_arch}
+    --with-build-sysroot=${CMAKE_INSTALL_PREFIX}/${target_arch}
+    --with-native-system-header-dir=/include
     --with-gmp=${toolchain_target_depends_dir}
     --with-mpfr=${toolchain_target_depends_dir}
     --with-mpc=${toolchain_target_depends_dir}

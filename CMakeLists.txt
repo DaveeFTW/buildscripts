@@ -46,6 +46,7 @@ set(GDB_HASH SHA256=c3a441a29c7c89720b734e5a9c6289c0a06be7e0c76ef538f7bbcef38934
 
 # Branches to fetch the different project targets. Can be overriden from command line.
 set(NEWLIB_TAG vita CACHE string "newlib branch name, commit id or tag")
+set(LIBK_TAG libk_as_libc CACHE string "newlib branch name, commit id or tag")
 set(SAMPLES_TAG master CACHE string "samples branch name, commit id or tag")
 set(HEADERS_TAG master CACHE string "vita-headers branch name, commit id or tag")
 set(TOOLCHAIN_TAG master CACHE string "vita-toolchain branch name, commit id or tag")
@@ -58,6 +59,8 @@ set(DOWNLOAD_DIR ${CMAKE_BINARY_DIR}/downloads CACHE PATH "Default download path
 
 set(OFFLINE YES CACHE BOOL "Check repo updates")
 set(UPDATE_DISCONNECTED_SUPPORT UPDATE_DISCONNECTED ${OFFLINE})
+
+set(LIBC "newlib" CACHE STRING "libc version to build (newlib/libk)")
 
 if("${CMAKE_VERSION}" VERSION_GREATER 3.6.0)
     set(GIT_SHALLOW_SUPPORT GIT_SHALLOW 1)
@@ -478,6 +481,7 @@ ExternalProject_add(gcc-base
     URL_HASH ${GCC_HASH}
     DOWNLOAD_DIR ${DOWNLOAD_DIR}
     PATCH_COMMAND patch -d <SOURCE_DIR> -p3 -t -N < ${PROJECT_SOURCE_DIR}/patches/gcc/0001-gcc-8.patch
+    && patch -d <SOURCE_DIR> -p1 -t -N < ${PROJECT_SOURCE_DIR}/patches/gcc/0002-stddef-pdclib.patch
     CONFIGURE_COMMAND CFLAGS=${extra_cflags} CXXFLAGS=${extra_cflags} ${compiler_flags}
     ${wrapper_command} <SOURCE_DIR>/configure
     --build=${build_native}
@@ -528,40 +532,60 @@ ExternalProject_add(vita-headers
 
 fix_repo_update(vita-headers)
 
-ExternalProject_Add(newlib
-    DEPENDS binutils_${target_suffix} gcc-base vita-headers
-    GIT_REPOSITORY https://github.com/vitasdk/newlib
-    GIT_TAG ${NEWLIB_TAG}
-    ${GIT_SHALLOW_SUPPORT}
-    # Pass the compiler_target_tools here so newlib picks up the fresh gcc-base compiler
-    CONFIGURE_COMMAND ${compiler_flags} ${toolchain_tools} ${compiler_target_tools}
-    ${wrapper_command} <SOURCE_DIR>/configure "CFLAGS_FOR_TARGET=-g -O2 -ffunction-sections -fdata-sections"
-    --build=${build_native}
-    --host=${host_native}
-    --target=${target_arch}
-    # Use this prefix so the install target can be run twice with different paths
-    --prefix=/
-    --with-build-sysroot=${CMAKE_INSTALL_PREFIX}/${target_arch}
-    --enable-newlib-io-long-long
-    --enable-newlib-register-fini
-    --disable-newlib-supplied-syscalls
-    --disable-nls
-    BUILD_COMMAND ${compiler_flags} ${toolchain_tools} ${wrapper_command} $(MAKE)
-    INSTALL_COMMAND $(MAKE) install DESTDIR=${CMAKE_INSTALL_PREFIX}
-    # Install a copy of newlib in the toolchain directory (required for pthread-embedded target)
-    COMMAND $(MAKE) install DESTDIR=${toolchain_build_install_dir}
-    # Save the commit id for tracking purposes
-    COMMAND ${GIT_EXECUTABLE} -C <SOURCE_DIR> rev-parse HEAD > ${CMAKE_BINARY_DIR}/newlib-version.txt
-    ${UPDATE_DISCONNECTED_SUPPORT}
+if (LIBC STREQUAL "newlib")
+    ExternalProject_Add(libc
+        DEPENDS binutils_${target_suffix} gcc-base vita-headers
+        GIT_REPOSITORY https://github.com/vitasdk/newlib
+        GIT_TAG ${NEWLIB_TAG}
+        ${GIT_SHALLOW_SUPPORT}
+        # Pass the compiler_target_tools here so newlib picks up the fresh gcc-base compiler
+        CONFIGURE_COMMAND ${compiler_flags} ${toolchain_tools} ${compiler_target_tools}
+        ${wrapper_command} <SOURCE_DIR>/configure "CFLAGS_FOR_TARGET=-g -O2 -ffunction-sections -fdata-sections"
+        --build=${build_native}
+        --host=${host_native}
+        --target=${target_arch}
+        # Use this prefix so the install target can be run twice with different paths
+        --prefix=/
+        --with-build-sysroot=${CMAKE_INSTALL_PREFIX}/${target_arch}
+        --enable-newlib-io-long-long
+        --enable-newlib-register-fini
+        --disable-newlib-supplied-syscalls
+        --disable-nls
+        BUILD_COMMAND ${compiler_flags} ${toolchain_tools} ${wrapper_command} $(MAKE)
+        INSTALL_COMMAND $(MAKE) install DESTDIR=${CMAKE_INSTALL_PREFIX}
+        # Install a copy of newlib in the toolchain directory (required for pthread-embedded target)
+        COMMAND $(MAKE) install DESTDIR=${toolchain_build_install_dir}
+        # Save the commit id for tracking purposes
+        COMMAND ${GIT_EXECUTABLE} -C <SOURCE_DIR> rev-parse HEAD > ${CMAKE_BINARY_DIR}/newlib-version.txt
+        ${UPDATE_DISCONNECTED_SUPPORT}
+        fix_repo_update(libc)
+        )
+elseif (LIBC STREQUAL "libk")
+    ExternalProject_Add(libc
+        DEPENDS binutils_${target_suffix} gcc-base vita-headers
+        GIT_REPOSITORY https://github.com/DaveeFTW/libk
+        GIT_TAG ${LIBK_TAG}
+        ${GIT_SHALLOW_SUPPORT}
+        # Set prefix to "/" here to be able to install twice
+        CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=/ -DCMAKE_C_COMPILER=${binutils_prefix}-gcc -DCMAKE_C_COMPILER_WORKS=1
+        BUILD_COMMAND ${compiler_flags} ${toolchain_tools} ${wrapper_command} $(MAKE)
+        INSTALL_COMMAND $(MAKE) install DESTDIR=${CMAKE_INSTALL_PREFIX}/${target_arch}
+        # Install a copy of newlib in the toolchain directory (required for pthread-embedded target)
+        COMMAND $(MAKE) install DESTDIR=${toolchain_build_install_dir}/${target_arch}
+        # Save the commit id for tracking purposes
+        COMMAND ${GIT_EXECUTABLE} -C <SOURCE_DIR> rev-parse HEAD > ${CMAKE_BINARY_DIR}/libk-version.txt
+        ${UPDATE_DISCONNECTED_SUPPORT}
+        fix_repo_update(libc)
     )
-
-fix_repo_update(newlib)
+else()
+    message(FATAL_ERROR "unsupported libc option: " ${LIBC})
+endif()
 
 # Build a complete gcc compiler to be able to compile the full gcc for the host when crosscompiling.
 # Using gcc-base doesn't work since is missing some headers.
 if(CMAKE_TOOLCHAIN_FILE)
     ExternalProject_add(gcc-complete
-        DEPENDS newlib gmp_${build_suffix} mpfr_${build_suffix} mpc_${build_suffix} isl_${build_suffix}
+        DEPENDS libc gmp_${build_suffix} mpfr_${build_suffix} mpc_${build_suffix} isl_${build_suffix}
         URL http://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz
         URL_HASH ${GCC_HASH}
         DOWNLOAD_DIR ${DOWNLOAD_DIR}
@@ -594,31 +618,48 @@ else()
     set(GCC_DEPENDS gcc-base)
 endif()
 
-ExternalProject_Add(pthread-embedded
-    DEPENDS binutils_${target_suffix} gcc-base newlib vita-headers
-    GIT_REPOSITORY https://github.com/vitasdk/pthread-embedded
-    GIT_TAG ${PTHREAD_TAG}
-    ${GIT_SHALLOW_SUPPORT}
-    # TODO: this project should have a proper makefile to support out-of-source builds
-    BUILD_IN_SOURCE 1
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND ${compiler_flags} ${wrapper_command} $(MAKE)
-    -C <SOURCE_DIR>/platform/vita ${pthread_tools} PREFIX=${CMAKE_INSTALL_PREFIX}
-    INSTALL_COMMAND $(MAKE) -C <SOURCE_DIR>/platform/vita PREFIX=${CMAKE_INSTALL_PREFIX}/${target_arch} install
-    # Save the commit id for tracking purposes
-    COMMAND ${GIT_EXECUTABLE} -C <SOURCE_DIR> rev-parse HEAD > ${CMAKE_BINARY_DIR}/pthread-embedded-version.txt
-    ${UPDATE_DISCONNECTED_SUPPORT}
-    )
 
-fix_repo_update(pthread-embedded)
+set(threading_options "")
+set(final_gcc_params "")
+
+if (LIBC STREQUAL "newlib")
+    ExternalProject_Add(pthread-embedded
+        DEPENDS binutils_${target_suffix} gcc-base libc vita-headers
+        GIT_REPOSITORY https://github.com/vitasdk/pthread-embedded
+        GIT_TAG ${PTHREAD_TAG}
+        ${GIT_SHALLOW_SUPPORT}
+        # TODO: this project should have a proper makefile to support out-of-source builds
+        BUILD_IN_SOURCE 1
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND ${compiler_flags} ${wrapper_command} $(MAKE)
+        -C <SOURCE_DIR>/platform/vita ${pthread_tools} PREFIX=${CMAKE_INSTALL_PREFIX}
+        INSTALL_COMMAND $(MAKE) -C <SOURCE_DIR>/platform/vita PREFIX=${CMAKE_INSTALL_PREFIX}/${target_arch} install
+        # Save the commit id for tracking purposes
+        COMMAND ${GIT_EXECUTABLE} -C <SOURCE_DIR> rev-parse HEAD > ${CMAKE_BINARY_DIR}/pthread-embedded-version.txt
+        ${UPDATE_DISCONNECTED_SUPPORT}
+        )
+
+    fix_repo_update(pthread-embedded)
+    set(threading_options "--enable-threads=posix")
+elseif(LIBC STREQUAL "libk")
+    # libk doesn't have the implementation to support pthread
+    # disable and use dummy target
+    add_custom_target(pthread-embedded)
+    set(threading_options "--disable-threads")
+
+    # in the case of libk, we are not interested in implementing an entire c++ environment
+    # our libc is restricted and building upon that is ambitious.
+    set(final_gcc_params "--disable-hosted-libstdcxx")
+endif()
 
 ExternalProject_add(gcc-final
     DEPENDS gmp_${target_suffix} mpfr_${target_suffix} mpc_${target_suffix} isl_${target_suffix}
-    DEPENDS newlib ${GCC_DEPENDS} pthread-embedded
+    DEPENDS libc ${GCC_DEPENDS} pthread-embedded
     URL http://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz
     URL_HASH ${GCC_HASH}
     DOWNLOAD_DIR ${DOWNLOAD_DIR}
     PATCH_COMMAND patch -d <SOURCE_DIR> -p3 -t -N < ${PROJECT_SOURCE_DIR}/patches/gcc/0001-gcc-8.patch
+    && patch -d <SOURCE_DIR> -p1 -t -N < ${PROJECT_SOURCE_DIR}/patches/gcc/0002-stddef-pdclib.patch
     CONFIGURE_COMMAND CFLAGS=${extra_cflags}
     CXXFLAGS=${extra_cflags} ${compiler_flags} ${toolchain_tools} ${compiler_target_tools}
     ${wrapper_command} <SOURCE_DIR>/configure
@@ -635,8 +676,9 @@ ExternalProject_add(gcc-final
     --with-isl=${toolchain_target_depends_dir}
     --with-libelf=${toolchain_target_depends_dir}
     ${common_gcc_configure_args}
+    ${threading_options}
+    ${final_gcc_params}
     --with-headers=yes
-    --enable-threads=posix
     BUILD_COMMAND ${toolchain_tools} ${compiler_target_tools} ${wrapper_command}
     $(MAKE) INHIBIT_LIBC_CFLAGS="-DUSE_TM_CLONE_REGISTRY=0"
     INSTALL_COMMAND $(MAKE) install
@@ -743,7 +785,7 @@ set(version_info_file ${CMAKE_INSTALL_PREFIX}/version_info.txt)
 add_custom_command(OUTPUT ${version_info_file}
     COMMAND ${CMAKE_COMMAND} -DINPUT_DIR=${CMAKE_BINARY_DIR} -DOUTPUT_FILE=${version_info_file}
     -P ${CMAKE_SOURCE_DIR}/cmake/create_version.cmake
-    DEPENDS vita-headers vita-toolchain_${target_suffix} newlib pthread-embedded samples
+    DEPENDS vita-headers vita-toolchain_${target_suffix} libc pthread-embedded samples
     COMMENT "Creating version_info.txt"
     )
 
